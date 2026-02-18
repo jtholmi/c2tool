@@ -466,8 +466,10 @@ static int c2_write_dr(struct c2interface *c2if, unsigned char data)
 
 		usleep(1);
 	} while (--timeout > 0);
-	if (timeout == 0)
+	if (timeout == 0) {
+		fprintf(stderr, "c2_write_dr: WAIT timeout\n");
 		return -EIO;
+	}
 
 	/* STOP field */
 	c2ck_strobe(c2if);
