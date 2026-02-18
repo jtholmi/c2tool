@@ -29,7 +29,7 @@ int handle_erase(struct c2tool_state *state, int argc, char **argv)
 	//return c2_flash_erase(state, 0);
 	for (int i = 0; i < 256; i++)
 	  buf[i] = i;
-	c2_flash_write(state, 0, 256, buf);
+	return c2_flash_write(state, 0, 256, buf);
 }
 
 COMMAND(erase, NULL, handle_erase, "Erase flash memory of connected device.");

@@ -18,7 +18,14 @@
  */
 
 #ifndef DEF_NO_GPIO
-  #include <pigpio.h>
+  #include <gpiod.h>
+  #define PI_INPUT 0
+  #define PI_OUTPUT 1
+  #define PI_PUD_OFF 0
+  #define PI_PUD_DOWN 1
+  #define PI_PUD_UP 2
+  #define PI_ON 1
+  #define PI_OFF 0
 #else
   #define gpioInitialise()        true
   #define gpioTerminate()
@@ -74,6 +81,216 @@
 #define GPIO_C2CK		24
 
 static uint16_t c2_poll_out_timeout;
+
+/* libgpiod v2 implementation */
+#ifndef DEF_NO_GPIO
+
+static struct gpiod_chip *chip = NULL;
+static struct gpiod_line_request *req_c2d = NULL;
+static struct gpiod_line_request *req_c2ck = NULL;
+
+static int gpioInitialise(void)
+{
+	struct gpiod_line_config *line_cfg;
+	struct gpiod_line_settings *settings;
+	struct gpiod_request_config *req_cfg;
+	unsigned int offset;
+	int ret = -1;
+
+	/* Try opening the main GPIO chip.
+	 * On Pi 5, gpiochip4 is typically the main header, but it maps to pinctrl-rp1 which is gpiochip0.
+	 * We try likely candidates.
+	 */
+	chip = gpiod_chip_open("/dev/gpiochip4");
+	if (!chip) {
+		chip = gpiod_chip_open("/dev/gpiochip0");
+		if (!chip) {
+			fprintf(stderr, "Failed to open gpiochip (tried 4 and 0)\n");
+			return -1;
+		}
+	}
+
+	line_cfg = gpiod_line_config_new();
+	settings = gpiod_line_settings_new();
+	req_cfg = gpiod_request_config_new();
+
+	if (!line_cfg || !settings || !req_cfg)
+		goto err;
+
+	/* Request C2CK as OUTPUT, initially HIGH (idle) */
+	gpiod_line_settings_set_direction(settings, GPIOD_LINE_DIRECTION_OUTPUT);
+	gpiod_line_settings_set_output_value(settings, GPIOD_LINE_VALUE_ACTIVE);
+	
+	offset = GPIO_C2CK;
+	gpiod_line_config_add_line_settings(line_cfg, &offset, 1, settings);
+	
+	gpiod_request_config_set_consumer(req_cfg, "c2tool_ck");
+	
+	req_c2ck = gpiod_chip_request_lines(chip, req_cfg, line_cfg);
+	if (!req_c2ck) {
+		perror("Failed to request C2CK");
+		goto err;
+	}
+
+	/* Request C2D as INPUT initially with pull-up */
+	gpiod_line_config_reset(line_cfg);
+	gpiod_line_settings_reset(settings);
+	
+	gpiod_line_settings_set_direction(settings, GPIOD_LINE_DIRECTION_INPUT);
+	gpiod_line_settings_set_bias(settings, GPIOD_LINE_BIAS_PULL_UP);
+	
+	offset = GPIO_C2D;
+	gpiod_line_config_add_line_settings(line_cfg, &offset, 1, settings);
+	
+	gpiod_request_config_set_consumer(req_cfg, "c2tool_d");
+	
+	req_c2d = gpiod_chip_request_lines(chip, req_cfg, line_cfg);
+	if (!req_c2d) {
+		perror("Failed to request C2D");
+		goto err;
+	}
+
+	ret = 0;
+	/* fallthrough to cleanup config objects */
+
+err:
+	if (line_cfg) gpiod_line_config_free(line_cfg);
+	if (settings) gpiod_line_settings_free(settings);
+	if (req_cfg) gpiod_request_config_free(req_cfg);
+	
+	if (ret < 0) {
+		if (req_c2ck) { gpiod_line_request_release(req_c2ck); req_c2ck = NULL; }
+		if (req_c2d) { gpiod_line_request_release(req_c2d); req_c2d = NULL; }
+		if (chip) { gpiod_chip_close(chip); chip = NULL; }
+	}
+	return ret;
+}
+
+static void gpioTerminate(void)
+{
+	if (req_c2d) { gpiod_line_request_release(req_c2d); req_c2d = NULL; }
+	if (req_c2ck) { gpiod_line_request_release(req_c2ck); req_c2ck = NULL; }
+	if (chip) { gpiod_chip_close(chip); chip = NULL; }
+}
+
+static void gpioWrite(int pin, int value)
+{
+	struct gpiod_line_request *req = (pin == GPIO_C2D) ? req_c2d : req_c2ck;
+	if (req) {
+		/* offset is 0 relative to the request */
+		gpiod_line_request_set_value(req, 0, value ? GPIOD_LINE_VALUE_ACTIVE : GPIOD_LINE_VALUE_INACTIVE);
+	}
+}
+
+static int gpioRead(int pin)
+{
+	struct gpiod_line_request *req = (pin == GPIO_C2D) ? req_c2d : req_c2ck;
+	if (req) {
+		return (gpiod_line_request_get_value(req, 0) == GPIOD_LINE_VALUE_ACTIVE) ? 1 : 0;
+	}
+	return 0;
+}
+
+static void gpioSetMode(int pin, int mode)
+{
+	struct gpiod_line_request *req = (pin == GPIO_C2D) ? req_c2d : req_c2ck;
+	struct gpiod_line_config *line_cfg;
+	struct gpiod_line_settings *settings;
+	unsigned int offset = (pin == GPIO_C2D) ? GPIO_C2D : GPIO_C2CK;
+	/* Note: When reconfiguring, we must provide the original offset if request was made by offset? 
+       No, "offsets" in add_line_settings are "offsets on the chip" if we were requesting from scratch?
+       Wait, gpiod_line_request_reconfigure_lines documentation says:
+       "The config object should contain settings for the lines that are part of the request.
+        The offsets are relative to the request?" 
+       Let's check documentation or assume relative.
+       Actually, `gpiod_line_config_add_line_settings` takes offsets.
+       If we used `gpiod_chip_request_lines`, we passed offsets on the chip (GPIO_C2D etc).
+       When reconfiguring, do we pass global offsets or relative?
+       
+       Looking at libgpiod v2 docs/examples:
+       reconfigure_lines takes a line_config. 
+       Usually the line_config uses offsets. 
+       If the request was created with global offsets (23, 24), we should probably use those same offsets.
+       
+       However, if we passed `offset = GPIO_C2D` during request, then the request manages line 23.
+       Wait, `gpiod_line_config_add_line_settings` takes an array of offsets.
+       Since we requested a single line (GPIO_C2D), the request manages 1 line.
+       Docs say: "The offsets in the config object must correspond to the offsets of lines requested."
+       If we requested line 23, then offset is 23. 
+       
+       Wait, let's play safe. If I have one line in the request, I probably still refer to it by its chip offset (23)?
+       Actually, `gpiod_chip_request_lines` maps offsets to lines. 
+       The `line_request` object holds the lines.
+       When reconfiguring, we are updating settings for lines in the request.
+       The config object must map offsets to settings.
+       If I use offset 0 (relative to request), will it work?
+       Or must I use 23?
+       
+       Let's check `gpiod_line_config_add_line_settings` docs.
+       "Add line settings for a set of offsets."
+       
+       If usage is:
+       req = request_lines(chip, ..., config_with_offset_23);
+       reconfigure_lines(req, new_config_with_offset_23);
+       This seems most logical.
+    */
+    
+	if (!req) return;
+
+	line_cfg = gpiod_line_config_new();
+	settings = gpiod_line_settings_new();
+	
+	if (!line_cfg || !settings) goto cfg_err;
+
+	gpiod_line_settings_set_direction(settings, (mode == PI_INPUT) ? GPIOD_LINE_DIRECTION_INPUT : GPIOD_LINE_DIRECTION_OUTPUT);
+	
+	/* Maintain pull-up for C2D in input mode as per original logic */
+	if (pin == GPIO_C2D && mode == PI_INPUT)
+		gpiod_line_settings_set_bias(settings, GPIOD_LINE_BIAS_PULL_UP);
+
+	offset = (pin == GPIO_C2D) ? GPIO_C2D : GPIO_C2CK;
+	gpiod_line_config_add_line_settings(line_cfg, &offset, 1, settings);
+	
+	gpiod_line_request_reconfigure_lines(req, line_cfg);
+
+cfg_err:
+	if (line_cfg) gpiod_line_config_free(line_cfg);
+	if (settings) gpiod_line_settings_free(settings);
+}
+
+static void gpioSetPullUpDown(int pin, int pud)
+{
+	struct gpiod_line_request *req = (pin == GPIO_C2D) ? req_c2d : req_c2ck;
+	struct gpiod_line_config *line_cfg;
+	struct gpiod_line_settings *settings;
+	unsigned int offset;
+    
+    if (!req) return;
+
+	line_cfg = gpiod_line_config_new();
+	settings = gpiod_line_settings_new();
+	
+	if (!line_cfg || !settings) goto pud_err;
+
+	enum gpiod_line_bias bias = GPIOD_LINE_BIAS_DISABLED;
+    if (pud == PI_PUD_UP) bias = GPIOD_LINE_BIAS_PULL_UP;
+    else if (pud == PI_PUD_DOWN) bias = GPIOD_LINE_BIAS_PULL_DOWN;
+
+	gpiod_line_settings_set_bias(settings, bias);
+    /* Ensure direction is INPUT when setting pull */
+    gpiod_line_settings_set_direction(settings, GPIOD_LINE_DIRECTION_INPUT);
+
+	offset = (pin == GPIO_C2D) ? GPIO_C2D : GPIO_C2CK;
+	gpiod_line_config_add_line_settings(line_cfg, &offset, 1, settings);
+	
+	gpiod_line_request_reconfigure_lines(req, line_cfg);
+
+pud_err:
+	if (line_cfg) gpiod_line_config_free(line_cfg);
+	if (settings) gpiod_line_settings_free(settings);
+}
+
+#endif /* DEF_NO_GPIO */
 
 /*
  * state 0: drive low

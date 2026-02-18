@@ -38,6 +38,7 @@ int c2_read_sfr(struct c2interface *c2if,unsigned char reg);
 int c2_read_direct(struct c2tool_state *state, unsigned char reg);
 
 int c2_flash_read(struct c2tool_state *state, unsigned int addr, unsigned int length, unsigned char *dest);
+int c2_flash_write(struct c2tool_state *state, unsigned int addr, unsigned int length, unsigned char *src);
 int c2_flash_erase_device(struct c2tool_state *state);
 int flash_chunk(struct c2tool_state *state, unsigned int addr, unsigned int length, unsigned char *src);
 
