@@ -304,7 +304,7 @@ static void c2d_set(struct c2interface *c2if, int state)
 		gpioSetMode(GPIO_C2D, PI_OUTPUT);
 		gpioWrite(GPIO_C2D, PI_OFF);
 	}
-	usleep(1);
+	usleep(10);
 }
 
 static int c2d_get(struct c2interface *c2if)
@@ -319,14 +319,15 @@ static void c2ck_set(struct c2interface *c2if, int state)
 		gpioWrite(GPIO_C2CK, PI_ON);
 	else
 		gpioWrite(GPIO_C2CK, PI_OFF);
-	usleep(1);
+	usleep(10);
 }
 
 static void c2ck_strobe(struct c2interface *c2if)
 {
 	gpioWrite(GPIO_C2CK, PI_OFF);
+	usleep(10);
 	gpioWrite(GPIO_C2CK, PI_ON);
-	usleep(1);
+	usleep(10);
 }
 
 /*
