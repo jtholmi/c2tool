@@ -1,5 +1,7 @@
 # c2tool
 
+This fork migrated from pigpio to libgpiod2 for Raspberry Pi 5 usage.
+
 **c2tool** is a linux userspace application meant to enable in-system
 programming on low pin-count Silicon Labs devices using the Silicon Labs
 2-Wire Interface (C2).
