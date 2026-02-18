@@ -458,7 +458,7 @@ static int c2_write_dr(struct c2interface *c2if, unsigned char data)
 	/* WAIT field */
 	c2d_set(c2if, 1);
 	gpioSetMode(GPIO_C2D, PI_INPUT);
-	timeout = 20;
+	timeout = 2000;
 	do {
 		c2ck_strobe(c2if);
 		if (c2d_get(c2if))
