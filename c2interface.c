@@ -818,7 +818,7 @@ int c2_halt(struct c2interface *c2if)
 {
 	c2_reset(c2if);
 
-	usleep(2);
+	usleep(20);
 
 	c2_write_ar(c2if, C2_FPCTL);
 
