@@ -822,14 +822,20 @@ int c2_halt(struct c2interface *c2if)
 
 	c2_write_ar(c2if, C2_FPCTL);
 
-	if (c2_write_dr(c2if, C2_FPCTL_RESET) < 0)
+	if (c2_write_dr(c2if, C2_FPCTL_RESET) < 0) {
+		fprintf(stderr, "Failed to write C2_FPCTL_RESET\n");
 		return -EIO;
+	}
 
-	if (c2_write_dr(c2if, C2_FPCTL_CORE_RESET) < 0)
+	if (c2_write_dr(c2if, C2_FPCTL_CORE_RESET) < 0) {
+		fprintf(stderr, "Failed to write C2_FPCTL_CORE_RESET\n");
 		return -EIO;
+	}
 
-	if (c2_write_dr(c2if, C2_FPCTL_HALT) < 0)
+	if (c2_write_dr(c2if, C2_FPCTL_HALT) < 0) {
+		fprintf(stderr, "Failed to write C2_FPCTL_HALT\n");
 		return -EIO;
+	}
 
 	usleep(30000);
 
