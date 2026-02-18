@@ -200,14 +200,20 @@ int main(int argc, char **argv)
 		}
 	}
 
-	if (c2_init() < 0)
+	if (c2_init() < 0) {
+		fprintf(stderr, "Failed to initialize C2 interface\n");
 		return 1;
+	}
 
-	if (c2_halt(&state.c2if) < 0)
+	if (c2_halt(&state.c2if) < 0) {
+		fprintf(stderr, "Failed to halt C2 device\n");
 		return 1;
+	}
 
-	if (c2_get_device_info(&state.c2if, &info) < 0)
+	if (c2_get_device_info(&state.c2if, &info) < 0) {
+		fprintf(stderr, "Failed to get device info\n");
 		return 1;
+	}
 
 	if (c2family_find(info.device_id, &state.family)) {
 		fprintf(stderr, "device family 0x%02x not supported yet\n", info.device_id);
