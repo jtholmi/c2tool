@@ -187,6 +187,19 @@ int main(int argc, char **argv)
 
 	LOG_SetLevel(LOG_LEVEL_WARNING);
 
+	/* Check for version command first to allow it without hardware */
+	if (argc > 0) {
+		const struct cmd *cmd;
+		const char *command = argv[0];
+
+		for_each_cmd(cmd) {
+			if (strcmp(cmd->name, command) == 0 && 
+			    strcmp(command, "version") == 0) {
+				return cmd->handler(NULL, argc, argv);
+			}
+		}
+	}
+
 	if (c2_init() < 0)
 		return 1;
 
