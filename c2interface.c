@@ -298,10 +298,12 @@ pud_err:
  */
 static void c2d_set(struct c2interface *c2if, int state)
 {
-	if (state)
-		gpioWrite(GPIO_C2D, PI_ON);
-	else
+	if (state) {
+		gpioSetMode(GPIO_C2D, PI_INPUT);
+	} else {
+		gpioSetMode(GPIO_C2D, PI_OUTPUT);
 		gpioWrite(GPIO_C2D, PI_OFF);
+	}
 	usleep(1);
 }
 
